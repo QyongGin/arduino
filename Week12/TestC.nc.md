@@ -1,130 +1,192 @@
 ### TestC.nc
 ```
-  1 module TestC
-  2 {
-  3         uses {
-  4                 interface Boot;
-  5                 interface Leds;
-  6                 interface Timer<TMilli> as MilliTimer;
-  7
-  8                 interface SplitControl as RadioControl;
-  9                 interface AMSend as RadioSend;
- 10
- 11                 interface Read<uint16_t> as Temp;
- 12                 interface Read<uint16_t> as Humi;
- 13                 interface Read<uint16_t> as Illu;
- 14
- 15                 interface Battery;
- 16             }
- 17 }
- 18
- 19 implementation
- 20 {
- 21         message_t testMsgBffr;
- 22         test_data_msg_t *testMsg;
- 23
- 24         uint32_t seqNo;
- 25         uint8_t step;
- 26
- 27
- 28         task void startTimer();
- 29         event void Boot.booted() {
- 30                 testMsg = (test_data_msg_t *) call RadioSend.getPayload(
- 31                                 &testMsgBffr, sizeof(test_data_msg_t));
- 32                 testMsg->srcID = TOS_NODE_ID;
- 33
- 34                 seqNo = 0;
- 35
- 36                 post startTimer();
- 37             }
- 38
- 39         task void startTimer() {
- 40                 call MilliTimer.startPeriodic(TEST_PERIOD);
- 41         }
- 42
- 43         task void radioOn();
- 44         event void MilliTimer.fired() {
- 45                 post radioOn();
- 46         }
- 47
- 48         void startDone();
- 49         task void radioOn() {
- 50                 if (call RadioControl.start() != SUCCESS) startDone();
- 51         }
- 52
- 53         event void RadioControl.startDone(error_t error) {
- 54                 startDone();
- 55         }
- 56
- 57         task void readTask();
- 58         void startDone() {
- 59                 step = 0;
- 60                 post readTask();
- 61                 call Leds.led0Toggle();
- 62             }
- 63
- 64         void sendDone();
- 65         task void sendTask() {
- 66                 testMsg->seqNo = seqNo++;
- 67                 testMsg->type = 2; //THL type 2
- 68
- 69                 if (call RadioSend.send(AM_BROADCAST_ADDR, &testMsgBffr,
- 70                     sizeof(test_data_msg_t)) != SUCCESS) sendDone();
- 71                 call Leds.led2Toggle();
- 72         }
- 73
- 74         event void RadioSend.sendDone(message_t* msg, error_t error) {
- 75                 sendDone();
- 76         }
- 77
- 78         task void radioOff();
- 79         void sendDone() {
- 80                 call Leds.led0Off();
- 81                 call Leds.led1Off();
- 82                 call Leds.led2Off();
- 83                 post radioOff();
- 84         }
- 85
- 86         void stopDone();
- 87         task void radioOff() {
- 88                 if (call RadioControl.stop() != SUCCESS) stopDone();
- 89         }
- 90
- 91         event void RadioControl.stopDone(error_t error) {
- 92                 stopDone();
- 93         }
- 94
- 95         void stopDone() {
- 96         }
- 97         task void readTask() {
- 98                 switch(step) {
- 99                         case 0:
-100                                 call Temp.read(); break;
-101                         case 1:
-102                                 call Humi.read(); break;
-103                         case 2:
-104                                 call Illu.read(); break;
-105                         default:
-106                                 testMsg->battery = call Battery.getVoltage();
-107                                 post sendTask();
-108                                 break;
-109                 }
-110                 step += 1;
-111         }
-112
-113         event void Temp.readDone(error_t error, uint16_t val) {
-114                 //if (error != SUCCESS) call Leds.led0On();
-115                 testMsg->Temp = error == SUCCESS ? val : 0xFFFA;
-116                 post readTask();
-117         }
-118         event void Humi.readDone(error_t error, uint16_t val) {
-119                 //if (error != SUCCESS) call Leds.led1On();
-120                 testMsg->Humi = error == SUCCESS ? val : 0xFFFB;
-121                 post readTask();
-122         }
+module TestC
+{
+    // 사용(uses)하는 인터페이스들을 정의
+    
+    uses {
+        interface Boot;                          // 시스템 부팅 이벤트 인터페이스
+        interface Leds;                          // LED 제어 인터페이스
+        interface Timer<TMilli> as MilliTimer;   // 밀리초 단위 주기 타이머
+
+        interface SplitControl as RadioControl;  // 라디오 모듈 제어 (시작/중지)
+        interface AMSend as RadioSend;           // Active Message 송신 인터페이스
+
+        interface Read<uint16_t> as Temp;        // 온도 센서 인터페이스
+        interface Read<uint16_t> as Humi;        // 습도 센서 인터페이스
+        interface Read<uint16_t> as Illu;        // 조도 센서 인터페이스
+
+        interface Battery;                       // 배터리 전압 측정 인터페이스
+    }
+}
+
+
+implementation
+{
+    message_t testMsgBffr;  // 메시지 버퍼 변수 선언
+    test_data_msg_t *testMsg;  // 메시지 포인터 (사용자 정의 메시지 구조체를 가리킴)
+
+    uint32_t seqNo;     // 메시지 순번
+    uint8_t step;       // 센서 읽기 단계 (0: Temp, 1: Humi, 2: Illu, 3: Battery)
+
+    // 타이머 시작을 위한 비동기 작업(task)
+    task void startTimer();
+
+    // 시스템이 부팅되면 호출됨
+    event void Boot.booted() {
+        testMsg = (test_data_msg_t *) call RadioSend.getPayload(
+                        &testMsgBffr, sizeof(test_data_msg_t)); // 메시지 payload 메모리 할당 ( 메시지 버퍼 초기화)
+        testMsg->srcID = TOS_NODE_ID;  // 현재 노드 ID 설정
+
+        seqNo = 0;  // 초기 순번 설정
+
+        post startTimer(); // 주기 타이머를 시작하기 위한 타이머 시작 task 호출
+    }
+
+    // 타이머 시작
+    task void startTimer() {
+        call MilliTimer.startPeriodic(TEST_PERIOD); // 주기적으로 타이머 이벤트 발생
+    }
+
+    // 라디오 시작을 위한 task
+    task void radioOn();
+
+    // 타이머 이벤트 발생 시 라디오 시작 task 호출
+    event void MilliTimer.fired() {
+        post radioOn(); // 라디오 모듈 시작 이후 센서 읽기 및 데이터 전송 작업 
+    }
+
+    // 라디오 시작 요청
+    void startDone();
+
+    task void radioOn() {
+        if (call RadioControl.start() != SUCCESS) startDone(); // 시작 실패시 직접 처리
+    }
+
+    // 라디오 시작 완료 이벤트
+    event void RadioControl.startDone(error_t error) {
+        startDone();
+    }
+
+    // 센서 읽기 task를 시작
+    task void readTask();
+
+    // 라디오 시작 완료 처리
+    void startDone() {
+        step = 0;              // 센서 읽기 순서 초기화
+        post readTask();       // 센서 읽기 task 호출
+        call Leds.led0Toggle(); // LED0 상태 반전
+    }
+
+    // 메시지 전송 완료 후 처리 함수
+    void sendDone();
+
+    // 무선 메시지 송신 task
+    task void sendTask() {
+        testMsg->seqNo = seqNo++; // 순번 증가
+        testMsg->type = 2;        // 메시지 타입 설정 (2: THL - Temp/Humi/Light)
+
+        // 메시지 전송 요청
+        if (call RadioSend.send(AM_BROADCAST_ADDR, &testMsgBffr,
+            sizeof(test_data_msg_t)) != SUCCESS) sendDone(); // 실패 시 수동 완료 처리
+        call Leds.led2Toggle(); // LED2 상태 반전
+    }
+
+    // 메시지 송신 완료 이벤트
+    event void RadioSend.sendDone(message_t* msg, error_t error) {
+        sendDone();
+    }
+
+    // 라디오 종료를 위한 task
+    task void radioOff();
+
+    // 메시지 송신 완료 처리 함수
+    void sendDone() {
+        call Leds.led0Off();  // LED0 끔
+        call Leds.led1Off();  // LED1 끔
+        call Leds.led2Off();  // LED2 끔
+        post radioOff();      // 라디오 종료 task 호출
+    }
+
+    // 라디오 중지 완료 처리 함수
+    void stopDone();
+
+    // 라디오 종료 task
+    task void radioOff() {
+        if (call RadioControl.stop() != SUCCESS) stopDone(); // 실패 시 직접 호출
+    }
+
+    // 라디오 종료 완료 이벤트
+    event void RadioControl.stopDone(error_t error) {
+        stopDone();
+    }
+
+    // 라디오 종료 후 추가 작업 없음 (비워둠)
+    void stopDone() {
+    }
+
+    // 센서 데이터 읽기 task
+    task void readTask() {
+        switch(step) {
+            case 0:
+                call Temp.read(); break;   // 온도 센서 읽기
+            case 1:
+                call Humi.read(); break;   // 습도 센서 읽기
+            case 2:
+                call Illu.read(); break;   // 조도 센서 읽기
+            default:
+                testMsg->battery = call Battery.getVoltage(); // 배터리 전압 측정
+                post sendTask();          // 송신 task 호출
+                break;
+        }
+        step += 1; // 다음 단계로 이동
+    }
+
+    // 온도 센서 읽기 완료 이벤트
+    event void Temp.readDone(error_t error, uint16_t val) {
+        testMsg->Temp = error == SUCCESS ? val : 0xFFFA; // 성공 시 측정값을 testMsg에 저장, 에러시 특수값 0xFFFA를 저장 
+        post readTask(); // 다음 센서 읽기
+    }
+
+    // 습도 센서 읽기 완료 이벤트
+    event void Humi.readDone(error_t error, uint16_t val) {
+        testMsg->Humi = error == SUCCESS ? val : 0xFFFB;
+        post readTask();
+    }
+
+    // 조도 센서 읽기 완료 이벤트
+    event void Illu.readDone(error_t error, uint16_t val){
+        testMsg->Illu = error == SUCCESS ? val : 0xFFFC;
+        post readTask();
+    }
+
+  // 기능 추가 예시
+  // 조도 값이 특정 값보다 낮으면 LED1 키고 크면 LED!을 끈다.
+  // event void Illu.readDone(error_t error, uint16_t val){
+  //   testMsg->Illu = error == SUCCESS ? val : 0xFFFC;
+
+    // if (error == SUCCESS && val < 300) {
+    //  call Leds.led1On();
+    // } else {
+    //  call Leds.led1Off();
+    // }
+
+    // post readTask();
+// }
+
+}
+
 ```
-123         event void Illu.readDone(error_t error, uint16_t val){
-124                 testMsg->Illu = error == SUCCESS ? val : 0xFFFC;
-125                 post readTask();
-126         }
-127 }
+### 역할
+- TinyOS에서 센서 데이터를 주기적으로 읽고 무선으로 송신하는 기능을 수행한다.
+
+### 정리, 모듈의 동작 흐름
+1. 시스템 부팅 -> ``Boot.booted()`` 호출
+2. 메시지 버퍼 초기화 -> 주기적 타이머 시작
+3. 타이머 발생 시 -> 라디오 ON -> 센서 순차 읽기 ( 온도 -> 습도 -> 조도(빛의 세기) -> 배터리)
+4. 데이터 준비 후 -> 무선 송신 -> 라디오 OFF
+
+### TinyOS에서 ``task``와 ``event``의 차이점
+- ``task``: 백그라운드에서 실행된다. 선점되지 않는다. 예 : ``sendTask``, ``readTask``, ``radioOn``등
+- ``event``: 하드웨어나 시스템에서 발생한 비동기적 신호에 의해 호출된다. 예 : ``Boot.booted()``, ``Timer.fired()``,``RadioSend.sendDone()``등
+
