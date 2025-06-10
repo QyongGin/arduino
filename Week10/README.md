@@ -18,6 +18,7 @@ export PYTHONPATH=$PYTHONPATH:$TOSROOT/support/sdk/python
 
 echo "setting up TinyOS on source path $TOSROOT"
 ```
+- ``"setting up TinyOS on source path $TOSROOT"`` 세팅 완료 문구
 - 2
 ```
 $ vim ~/.bashrc
@@ -28,6 +29,8 @@ $ vim ~/.bashrc
 ```
 $ source ~/.bashrc
 ```
+- ``.파일``은 대부분 세팅하는 파일
+  
 ### JNI 파일 복사
 ```
 $ git clone https://github.com/sonnonet/jni.git
